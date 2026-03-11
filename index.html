@@ -176,6 +176,7 @@
       <input type="file" id="sidebarInput" accept=".csv,.json" style="display:none" onchange="onSidebarFileSelect(event)">
     </div>
     <div id="sidebarStatus"></div>
+    <div id="storageStatus" style="padding:8px 12px;font-size:0.73rem;color:var(--text2);border-top:1px solid var(--border);line-height:1.6"></div>
     <div class="sidebar-save-row">
       <button class="sidebar-btn primary" onclick="saveCurrentData()">💾 שמור כ-JSON</button>
       <button class="sidebar-btn" onclick="exportFilteredCSV()">📊 ייצוא CSV מסונן</button>
@@ -313,14 +314,13 @@ function renderFileList() {
 function deleteFile(fileId) {
   const idx = FILES.findIndex(f => f.id === fileId);
   if(idx < 0) return;
-  const removed = FILES[idx].count;
   FILES.splice(idx, 1);
-  // Remove records from RAW
   for(let i = RAW.length - 1; i >= 0; i--) {
     if(RAW[i]._fileId === fileId) RAW.splice(i, 1);
   }
   renderFileList();
-  render();
+  rebuildAfterDataChange();
+  saveToLocalStorage();
 }
 
 function addFile(name, records) {
@@ -329,7 +329,8 @@ function addFile(name, records) {
   FILES.push({ id, name, count: records.length });
   records.forEach(r => RAW.push(r));
   renderFileList();
-  render();
+  rebuildAfterDataChange();
+  saveToLocalStorage();
 }
 
 function showSidebarStatus(msg, ok) {
@@ -423,17 +424,145 @@ const INCOME_CATS = new Set(['הכנסות קבועות','הכנסות משתנ�
 const EXPENSE_CATS = new Set();
 
 // Build full list of categories and classify
-const ALL_CATS = [...new Set(RAW.map(r=>r.category).filter(Boolean))].sort();
-ALL_CATS.forEach(c => { if(!INCOME_CATS.has(c)) EXPENSE_CATS.add(c); });
-
-// All months sorted
-const ALL_MONTHS = [...new Set(RAW.map(r=>r.month).filter(Boolean))].sort();
+let ALL_CATS = [];
+let ALL_MONTHS = [];
 
 // State
-let selectedCats = new Set(ALL_CATS);
-let yoyCats = new Set(ALL_CATS);
+let selectedCats = new Set();
+let yoyCats = new Set();
 let fromMonth = ALL_MONTHS[Math.max(0, ALL_MONTHS.length-13)];
 let toMonth = ALL_MONTHS[ALL_MONTHS.length-2]; // exclude current incomplete month
+
+
+// ============================================================
+// REBUILD AFTER DATA CHANGE
+// ============================================================
+function rebuildAfterDataChange() {
+  // Recompute dynamic lists
+  ALL_CATS.length = 0;
+  const newCats = [...new Set(RAW.map(r=>r.category).filter(Boolean))].sort();
+  newCats.forEach(c => ALL_CATS.push(c));
+
+  ALL_MONTHS.length = 0;
+  const newMonths = [...new Set(RAW.map(r=>r.month).filter(Boolean))].sort();
+  newMonths.forEach(m => ALL_MONTHS.push(m));
+
+  EXPENSE_CATS.clear();
+  ALL_CATS.forEach(c => { if(!INCOME_CATS.has(c)) EXPENSE_CATS.add(c); });
+
+  // Add new cats to filters (keep existing selections)
+  ALL_CATS.forEach(c => selectedCats.add(c));
+  ALL_CATS.filter(c => EXPENSE_CATS.has(c)).forEach(c => yoyCats.add(c));
+
+  // Update month selectors
+  const fromSel = document.getElementById('fromMonth');
+  const toSel   = document.getElementById('toMonth');
+  const prevFrom = fromSel.value;
+  const prevTo   = toSel.value;
+  fromSel.innerHTML = '';
+  toSel.innerHTML   = '';
+  ALL_MONTHS.forEach(m => {
+    fromSel.innerHTML += `<option value="${m}">${m}</option>`;
+    toSel.innerHTML   += `<option value="${m}">${m}</option>`;
+  });
+  fromMonth = ALL_MONTHS.includes(prevFrom) ? prevFrom : ALL_MONTHS[Math.max(0, ALL_MONTHS.length-13)];
+  toMonth   = ALL_MONTHS.includes(prevTo)   ? prevTo   : ALL_MONTHS[ALL_MONTHS.length - 2] || ALL_MONTHS[ALL_MONTHS.length - 1];
+  fromSel.value = fromMonth;
+  toSel.value   = toMonth;
+
+  // Rebuild category chips
+  const catContainer = document.getElementById('catFilters');
+  catContainer.innerHTML = '';
+  ALL_CATS.forEach(cat => {
+    const isIncome = INCOME_CATS.has(cat);
+    const chip = document.createElement('div');
+    chip.className = `cat-chip ${isIncome?'income':'expense'} active`;
+    chip.dataset.cat = cat;
+    chip.textContent = cat;
+    chip.onclick = () => toggleCat(cat, chip);
+    catContainer.appendChild(chip);
+  });
+
+  // Rebuild YoY chips
+  const yoyContainer = document.getElementById('yoyCatFilters');
+  yoyContainer.innerHTML = '';
+  ALL_CATS.filter(c => EXPENSE_CATS.has(c)).forEach(cat => {
+    const chip = document.createElement('div');
+    chip.className = 'cat-chip expense active';
+    chip.style.cssText = 'font-size:0.75rem;padding:4px 10px';
+    chip.dataset.yoyCat = cat;
+    chip.textContent = cat;
+    chip.onclick = () => {
+      if(yoyCats.has(cat)) { yoyCats.delete(cat); chip.classList.remove('active'); }
+      else { yoyCats.add(cat); chip.classList.add('active'); }
+      renderYoy();
+    };
+    yoyContainer.appendChild(chip);
+  });
+
+  render();
+}
+
+// ============================================================
+// LOCAL STORAGE — PERSIST DATA BETWEEN SESSIONS
+// ============================================================
+const LS_KEY = 'cashflow_dashboard_v1';
+
+function saveToLocalStorage() {
+  try {
+    const payload = { files: FILES, records: RAW };
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    updateStorageStatus();
+  } catch(e) {
+    console.warn('localStorage save failed:', e);
+  }
+}
+
+function loadFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return false;
+    const payload = JSON.parse(raw);
+    if(!payload.records || !payload.records.length) return false;
+    payload.records.forEach(r => RAW.push(r));
+    payload.files.forEach(f => {
+      if(!FILES.find(x => x.id === f.id)) FILES.push(f);
+      if(f.id >= nextFileId) nextFileId = f.id + 1;
+    });
+    return true;
+  } catch(e) {
+    console.warn('localStorage load failed:', e);
+    return false;
+  }
+}
+
+function clearLocalStorage() {
+  localStorage.removeItem(LS_KEY);
+  // Clear all data
+  RAW.length = 0;
+  FILES.length = 0;
+  renderFileList();
+  rebuildAfterDataChange();
+  updateStorageStatus();
+  showEmptyState();
+}
+
+function updateStorageStatus() {
+  const el = document.getElementById('storageStatus');
+  if(!el) return;
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if(raw) {
+      const kb = (raw.length / 1024).toFixed(0);
+      const count = RAW.length;
+      el.innerHTML = `<span style="color:var(--green)">✓ שמור מקומית</span> · ${count.toLocaleString()} עסקאות · ${kb} KB
+        <button onclick="clearLocalStorage()" style="margin-right:8px;background:none;border:1px solid var(--border);color:var(--red);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:0.72rem">מחק נתונים שמורים</button>`;
+    } else {
+      el.textContent = 'לא נשמר מקומית';
+      el.style.color = 'var(--text2)';
+    }
+  } catch(e) {}
+}
 
 // ============================================================
 // FILTERING
@@ -1274,16 +1403,19 @@ function selectIncome() {
 // INIT
 // ============================================================
 window.onload = () => {
-  initMonthSelectors();
-  initCatFilters();
   initCharts();
-  initYoyCatFilters();
-  renderFileList();
-  if(RAW.length === 0) {
-    showEmptyState();
+  const hasData = loadFromLocalStorage();
+  if(hasData) {
+    renderFileList();
+    rebuildAfterDataChange();
   } else {
-    render();
+    initMonthSelectors();
+    initCatFilters();
+    initYoyCatFilters();
+    renderFileList();
+    showEmptyState();
   }
+  updateStorageStatus();
 };
 
 function showEmptyState() {
