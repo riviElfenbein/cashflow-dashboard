@@ -147,6 +147,48 @@
   ::-webkit-scrollbar-track { background: var(--surface); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+  /* Sortable table headers */
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--text); background: var(--border); }
+  th.sortable .sort-icon { opacity: 0.5; font-size: 0.7rem; margin-right: 2px; }
+  th.sortable.active-sort { color: var(--accent); }
+  th.sortable.active-sort .sort-icon { opacity: 1; }
+
+  /* Category edit modal */
+  #catEditOverlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.65); z-index: 999;
+    align-items: center; justify-content: center;
+  }
+  #catEditOverlay.open { display: flex; }
+  #catEditModal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 28px 32px; min-width: 340px;
+    max-width: 480px; width: 90%; box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+  }
+  #catEditModal h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  #catEditModal .biz-label {
+    color: var(--text2); font-size: 0.85rem; margin-bottom: 18px;
+    padding-bottom: 14px; border-bottom: 1px solid var(--border);
+  }
+  #catEditModal .cat-label { font-size: 0.8rem; color: var(--text2); margin-bottom: 6px; }
+  #catEditModal select {
+    width: 100%; padding: 9px 12px; border-radius: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-size: 0.92rem; margin-bottom: 22px; outline: none;
+  }
+  #catEditModal select:focus { border-color: var(--accent); }
+  .catEditBtns { display: flex; gap: 10px; flex-wrap: wrap; }
+  .catEditBtns button {
+    flex: 1; min-width: 120px; padding: 9px 12px; border-radius: 8px;
+    cursor: pointer; font-size: 0.87rem; border: none; font-weight: 600;
+    transition: opacity .15s;
+  }
+  .catEditBtns button:hover { opacity: 0.85; }
+  .btn-cat-all    { background: var(--accent); color: #fff; }
+  .btn-cat-one    { background: var(--surface2); color: var(--text); border: 1px solid var(--border) !important; }
+  .btn-cat-cancel { background: none; color: var(--text2); border: 1px solid var(--border) !important; }
 </style>
 </head>
 <body>
@@ -264,15 +306,22 @@
     <!-- Transactions -->
     <div class="table-section">
       <h3>📋 פירוט עסקאות <span id="txCount" style="color:var(--accent);font-size:0.8rem"></span></h3>
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <input id="txFilterInput" type="text" placeholder="🔍 חפש לפי שם עסק או קטגוריה..."
+          oninput="_txFilter=this.value.toLowerCase();renderTable()"
+          style="flex:1;padding:7px 12px;border-radius:8px;background:var(--surface2);
+                 border:1px solid var(--border);color:var(--text);font-size:0.85rem;outline:none">
+        <span id="txCountLabel" style="color:var(--text2);font-size:0.8rem;white-space:nowrap"></span>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>חודש</th>
-              <th>שם העסק</th>
-              <th>קטגוריה</th>
-              <th>תאריך</th>
-              <th>סכום</th>
+              <th class="sortable" id="th_month"    onclick="sortTx('month')">   חודש    <span class="sort-icon" id="sort_month"></span></th>
+              <th class="sortable" id="th_business" onclick="sortTx('business')">שם העסק <span class="sort-icon" id="sort_business"></span></th>
+              <th class="sortable" id="th_category" onclick="sortTx('category')">קטגוריה <span class="sort-icon" id="sort_category"></span></th>
+              <th class="sortable" id="th_date"     onclick="sortTx('date')">    תאריך   <span class="sort-icon" id="sort_date"></span></th>
+              <th class="sortable" id="th_amount"   onclick="sortTx('amount')">  סכום    <span class="sort-icon" id="sort_amount"></span></th>
             </tr>
           </thead>
           <tbody id="txBody"></tbody>
@@ -500,6 +549,14 @@ let selectedCats = new Set();
 let yoyCats = new Set();
 let fromMonth = ALL_MONTHS[Math.max(0, ALL_MONTHS.length-13)];
 let toMonth = ALL_MONTHS[ALL_MONTHS.length-2]; // exclude current incomplete month
+
+// Table sort/filter state
+let _txSort        = { col: 'month', dir: -1 };  // default: newest first
+let _txFilter      = '';
+let _shownRecords  = [];   // populated in renderTable(), referenced by onclick
+
+// Category edit state
+let _editingRecord = null;
 
 
 // ============================================================
@@ -1375,19 +1432,130 @@ function render() {
 
   renderYoy();
 
-  // Transactions table (last 100)
-  const sorted = [...data].sort((a,b)=>b.month.localeCompare(a.month)||b.date.localeCompare(a.date));
-  const shown = sorted.slice(0,100);
-  document.getElementById('txCount').textContent = `(${data.length.toLocaleString()} עסקאות)`;
-  document.getElementById('txBody').innerHTML = shown.map(r=>`
+  // Delegate to renderTable() for the transactions section
+  renderTable();
+}
+
+// ============================================================
+// TRANSACTIONS TABLE — SORT, FILTER, RENDER
+// ============================================================
+function sortTx(col) {
+  if(_txSort.col === col) {
+    _txSort.dir *= -1;
+  } else {
+    _txSort.col = col;
+    // amounts: default ascending (smallest/most-negative first); strings: newest/A-Z first
+    _txSort.dir = col === 'amount' ? 1 : -1;
+  }
+  renderTable();
+}
+
+function renderTable() {
+  // Update sort indicator icons on headers
+  ['month','business','category','date','amount'].forEach(col => {
+    const thEl   = document.getElementById('th_' + col);
+    const iconEl = document.getElementById('sort_' + col);
+    if(!thEl || !iconEl) return;
+    if(_txSort.col === col) {
+      thEl.classList.add('active-sort');
+      iconEl.textContent = _txSort.dir === 1 ? '▲' : '▼';
+    } else {
+      thEl.classList.remove('active-sort');
+      iconEl.textContent = '';
+    }
+  });
+
+  let rows = getFiltered();
+
+  // Update main count badge
+  document.getElementById('txCount').textContent = `(${rows.length.toLocaleString()} עסקאות)`;
+
+  // Text filter (business name OR category)
+  if(_txFilter) {
+    rows = rows.filter(r =>
+      (r.business || '').toLowerCase().includes(_txFilter) ||
+      (r.category  || '').toLowerCase().includes(_txFilter)
+    );
+  }
+
+  // Sort
+  const col = _txSort.col;
+  const dir = _txSort.dir;
+  rows = [...rows].sort((a, b) => {
+    const av = col === 'amount' ? (a[col] || 0) : (a[col] || '');
+    const bv = col === 'amount' ? (b[col] || 0) : (b[col] || '');
+    if(av < bv) return -dir;
+    if(av > bv) return  dir;
+    return 0;
+  });
+
+  const shown = rows.slice(0, 200);
+  _shownRecords = shown;
+
+  // Row count label (shown / total after filter)
+  const countEl = document.getElementById('txCountLabel');
+  if(countEl) {
+    countEl.textContent = _txFilter
+      ? `מציג ${shown.length} מתוך ${rows.length} תוצאות`
+      : (shown.length < rows.length ? `מציג ${shown.length} מתוך ${rows.length}` : '');
+  }
+
+  document.getElementById('txBody').innerHTML = shown.map((r, i) => `
     <tr>
       <td>${r.month}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.business}">${r.business}</td>
-      <td><span style="background:var(--surface2);padding:2px 8px;border-radius:10px;font-size:0.78rem">${r.category}</span></td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.business||''}">${r.business||''}</td>
+      <td>
+        <span onclick="openCatEditModal(_shownRecords[${i}])"
+          style="background:var(--surface2);padding:2px 8px;border-radius:10px;font-size:0.78rem;cursor:pointer;user-select:none"
+          title="לחץ לעריכת קטגוריה">
+          ${r.category||'—'} <span style="opacity:0.4;font-size:0.68rem">✏️</span>
+        </span>
+      </td>
       <td>${r.date}</td>
       <td class="${r.amount>0?'amount-pos':'amount-neg'}">${fmt(r.amount)}</td>
     </tr>
   `).join('');
+}
+
+// ============================================================
+// CATEGORY EDIT MODAL
+// ============================================================
+function openCatEditModal(record) {
+  if(!record) return;
+  _editingRecord = record;
+  const bizCount = RAW.filter(r => r.business === record.business).length;
+  document.getElementById('catEditBizLabel').innerHTML =
+    `<strong>${record.business}</strong><br>
+     <span style="font-size:0.8rem">קטגוריה נוכחית: <em>${record.category||'—'}</em> &nbsp;·&nbsp; ${bizCount.toLocaleString()} עסקאות בסך הכל</span>`;
+  const sel = document.getElementById('catEditSelect');
+  sel.innerHTML = ALL_CATS.map(c =>
+    `<option value="${c}" ${c===record.category?'selected':''}>${c}</option>`
+  ).join('');
+  document.getElementById('catEditOverlay').classList.add('open');
+}
+
+function closeCatEdit() {
+  _editingRecord = null;
+  document.getElementById('catEditOverlay').classList.remove('open');
+}
+
+// Close modal on Escape key
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape') closeCatEdit();
+});
+
+function applyCatEdit(allForBusiness) {
+  if(!_editingRecord) return;
+  const newCat = document.getElementById('catEditSelect').value;
+  if(allForBusiness) {
+    const biz = _editingRecord.business;
+    RAW.forEach(r => { if(r.business === biz) r.category = newCat; });
+  } else {
+    _editingRecord.category = newCat;
+  }
+  closeCatEdit();
+  saveToLocalStorage();
+  rebuildAfterDataChange();
 }
 
 // ============================================================
@@ -1496,5 +1664,21 @@ function showEmptyState() {
     </div>`;
 }
 </script>
+
+<!-- Category Edit Modal -->
+<div id="catEditOverlay" onclick="if(event.target===this)closeCatEdit()">
+  <div id="catEditModal">
+    <h3>✏️ עריכת קטגוריה</h3>
+    <div class="biz-label" id="catEditBizLabel"></div>
+    <div class="cat-label">בחר קטגוריה חדשה:</div>
+    <select id="catEditSelect"></select>
+    <div class="catEditBtns">
+      <button class="btn-cat-all"    onclick="applyCatEdit(true)">🔄 שנה לכל העסקאות של העסק</button>
+      <button class="btn-cat-one"    onclick="applyCatEdit(false)">✏️ שנה רק עסקה זו</button>
+      <button class="btn-cat-cancel" onclick="closeCatEdit()">ביטול</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
