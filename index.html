@@ -1531,6 +1531,7 @@ function openCatEditModal(record) {
   sel.innerHTML = ALL_CATS.map(c =>
     `<option value="${c}" ${c===record.category?'selected':''}>${c}</option>`
   ).join('');
+  document.getElementById('catEditNew').value = '';
   document.getElementById('catEditOverlay').classList.add('open');
 }
 
@@ -1546,7 +1547,10 @@ document.addEventListener('keydown', e => {
 
 function applyCatEdit(allForBusiness) {
   if(!_editingRecord) return;
-  const newCat = document.getElementById('catEditSelect').value;
+  // Prefer free-text new category over dropdown selection
+  const newInput = document.getElementById('catEditNew').value.trim();
+  const newCat   = newInput || document.getElementById('catEditSelect').value;
+  if(!newCat) return;
   if(allForBusiness) {
     const biz = _editingRecord.business;
     RAW.forEach(r => { if(r.business === biz) r.category = newCat; });
@@ -1670,8 +1674,20 @@ function showEmptyState() {
   <div id="catEditModal">
     <h3>✏️ עריכת קטגוריה</h3>
     <div class="biz-label" id="catEditBizLabel"></div>
-    <div class="cat-label">בחר קטגוריה חדשה:</div>
-    <select id="catEditSelect"></select>
+    <div class="cat-label">בחר קטגוריה קיימת:</div>
+    <select id="catEditSelect" oninput="document.getElementById('catEditNew').value=''"></select>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:-10px;margin-bottom:22px">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      <span style="color:var(--text2);font-size:0.78rem;white-space:nowrap">או הוסף קטגוריה חדשה</span>
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+    <input id="catEditNew" type="text" placeholder="שם קטגוריה חדשה..."
+      oninput="if(this.value.trim()) document.getElementById('catEditSelect').value=''"
+      style="width:100%;padding:9px 12px;border-radius:8px;background:var(--surface2);
+             border:1px solid var(--border);color:var(--text);font-size:0.92rem;
+             margin-bottom:22px;outline:none;box-sizing:border-box"
+      onfocus="this.style.borderColor='var(--accent)'"
+      onblur="this.style.borderColor='var(--border)'">
     <div class="catEditBtns">
       <button class="btn-cat-all"    onclick="applyCatEdit(true)">🔄 שנה לכל העסקאות של העסק</button>
       <button class="btn-cat-one"    onclick="applyCatEdit(false)">✏️ שנה רק עסקה זו</button>
