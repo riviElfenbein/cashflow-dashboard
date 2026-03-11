@@ -387,10 +387,39 @@ function loadFileIntoRegistry(file) {
 function parseCSVToRecords(raw) {
   const lines = raw.split(/\r?\n/).filter(l => l.trim());
   if(lines.length < 2) return [];
-  const hdrs = lines[0].split(',').map(h => h.replace(/"/g,'').trim());
+
+  // Auto-detect delimiter: count semicolons vs commas in first data line
+  const sample = lines[0];
+  const semiCount = (sample.match(/;/g) || []).length;
+  const commaCount = (sample.match(/,/g) || []).length;
+  const delim = semiCount > commaCount ? ';' : ',';
+
+  // Parse a single CSV line respecting quoted fields
+  function parseLine(line) {
+    const vals = [];
+    let cur = '', inQ = false;
+    for(let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if(ch==='"') {
+        if(inQ && line[i+1]==='"') { cur+='"'; i++; }
+        else inQ = !inQ;
+      } else if(ch===delim && !inQ) {
+        vals.push(cur.trim());
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    vals.push(cur.trim());
+    return vals;
+  }
+
+  const hdrs = parseLine(lines[0]).map(h => h.replace(/"/g,'').trim());
+
   const colMap = {
     'month':'month','business':'business','category':'category',
     'date':'date','amount':'amount','payment':'payment','source':'source',
+    // Hebrew headers
     '\u05e9\u05d9\u05d9\u05da \u05dc\u05ea\u05d6\u05e8\u05d9\u05dd \u05d7\u05d5\u05d3\u05e9':'month',
     '\u05e9\u05dd \u05d4\u05e2\u05e1\u05e7':'business',
     '\u05e7\u05d8\u05d2\u05d5\u05e8\u05d9\u05d4 \u05d1\u05ea\u05d6\u05e8\u05d9\u05dd':'category',
@@ -400,22 +429,61 @@ function parseCSVToRecords(raw) {
     '\u05e1\u05d5\u05d2 \u05de\u05e7\u05d5\u05e8':'source',
     '\u05d4\u05d0\u05dd \u05de\u05d5\u05d7\u05e8\u05d2 \u05de\u05d4\u05ea\u05d6\u05e8\u05d9\u05dd?':'excluded',
   };
-  return lines.slice(1).map(line => {
-    const vals = [];
-    let cur = '', inQ = false;
-    for(let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if(ch==='"') { if(inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
-      else if(ch===',' && !inQ) { vals.push(cur.trim()); cur=''; }
-      else cur += ch;
+
+  // Robust amount parser: strip currency symbols + thousands commas/periods
+  function parseAmount(str) {
+    if(!str && str !== 0) return 0;
+    // Remove currency symbols, spaces, RTL/LTR marks
+    let s = String(str).replace(/[\u20aa\u0024\u20ac\u00a3\u00a5\u202a\u202b\u200e\u200f]/g, '').trim();
+    // Detect format: if has both ',' and '.' — determine which is decimal
+    const hasComma = s.includes(',');
+    const hasDot   = s.includes('.');
+    if(hasComma && hasDot) {
+      // e.g. "1,234.56" → remove commas; or "1.234,56" → remove dots, replace comma with dot
+      const lastComma = s.lastIndexOf(',');
+      const lastDot   = s.lastIndexOf('.');
+      if(lastDot > lastComma) {
+        // dot is decimal separator → remove commas (thousands)
+        s = s.replace(/,/g, '');
+      } else {
+        // comma is decimal separator → remove dots (thousands), replace comma with dot
+        s = s.replace(/\./g, '').replace(',', '.');
+      }
+    } else if(hasComma && !hasDot) {
+      // Could be thousands "1,234" or decimal "1,23"
+      const parts = s.split(',');
+      if(parts.length === 2 && parts[1].length <= 2) {
+        // Treat as decimal separator (e.g. "1234,56" → "1234.56")
+        s = parts[0] + '.' + parts[1];
+      } else {
+        // Treat as thousands separator (e.g. "1,234,567")
+        s = s.replace(/,/g, '');
+      }
     }
-    vals.push(cur.trim());
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+  }
+
+  const records = lines.slice(1).map(line => {
+    const vals = parseLine(line);
     const r = { excluded: false };
-    hdrs.forEach((h,i) => { const m = colMap[h]; if(m) r[m] = vals[i] ?? ''; });
-    if(r.excluded==='True') r.excluded = true;
-    r.amount = parseFloat(r.amount) || 0;
+    hdrs.forEach((h, i) => {
+      const mapped = colMap[h];
+      if(mapped) r[mapped] = (vals[i] ?? '').replace(/^"|"$/g, '');
+    });
+    r.excluded = (r.excluded === 'True' || r.excluded === 'true' || r.excluded === '1');
+    r.amount = parseAmount(r.amount);
     return r;
   }).filter(r => r.month || r.date);
+
+  // Debug: log first record to console
+  if(records.length) {
+    console.log('[CSV parse] delimiter:', JSON.stringify(delim), '| headers:', hdrs);
+    console.log('[CSV parse] first record:', JSON.stringify(records[0]));
+    console.log('[CSV parse] total records:', records.length, '| non-zero amounts:', records.filter(r=>r.amount!==0).length);
+  }
+
+  return records;
 }
 
 
