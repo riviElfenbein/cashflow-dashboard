@@ -4,11 +4,9 @@ A personal finance dashboard built as a single self-contained HTML file — no s
 
 ---
 
-## Getting Started
+## Quick Start
 
-1. Open `index.html` in any modern browser (Chrome, Safari, Firefox, Edge)
-2. The dashboard loads with embedded data from `cashflow 2.numbers`
-3. No installation needed
+> 👉 See **[QUICKSTART.md](./QUICKSTART.md)** for step-by-step instructions on running the dashboard with your own data.
 
 ---
 
@@ -25,7 +23,7 @@ Four cards at the top showing for the selected period:
 Select a custom date range using the **From / To** dropdowns, or click **"12 חודשים אחרונים"** for a quick last-12-months view.
 
 ### 🏷️ Category Filter
-- 43 expense/income categories displayed as colored chips
+- All expense/income categories displayed as colored chips
 - Click any chip to toggle it on/off
 - Quick actions: **Select All**, **Clear All**, **Expenses Only**, **Income Only**
 - All charts and the summary cards update instantly
@@ -54,10 +52,27 @@ The YoY chart has its own independent category filter — choose specific catego
 3. The report opens in a new tab — use **"🖨️ הדפסה / שמור PDF"** to save as PDF
 
 ### 📋 Transactions Table
-Full sortable list of transactions for the selected filters (shows latest 100). Columns: Month, Business, Category, Date, Amount.
+Full list of transactions for the selected filters (up to 200 rows).
+
+| Feature | How |
+|---|---|
+| **Sort** | Click any column header (חודש / שם העסק / קטגוריה / תאריך / סכום) — click again to reverse |
+| **Search** | Type in the search box above the table — filters by business name or category live |
+| **Edit category** | Click the ✏️ chip on any row — a modal opens to change the category |
+
+### ✏️ Category Edit Modal
+When editing a category you can:
+- **Pick from the existing list** — dropdown with all known categories
+- **Type a new category name** — free-text field below the dropdown (creates the category automatically)
+
+After choosing the new category, pick how to apply it:
+- **🔄 שנה לכל העסקאות של העסק** — updates every transaction from that business across all loaded data
+- **✏️ שנה רק עסקה זו** — updates only the single clicked row
+
+Changes are saved to localStorage immediately and survive a page refresh.
 
 ### 📄 Export Report (Category-based)
-Click **"📄 ייצוא דו"ח"** in the category filter section to generate a lawyer/accountant-friendly report with:
+Click **"📄 ייצוא דו״ח"** in the category filter section to generate a lawyer/accountant-friendly report with:
 - Summary totals
 - Average monthly expense per category
 - Month-by-month breakdown table per category
@@ -75,6 +90,8 @@ The sidebar shows all currently loaded data files.
 | **Remove a file** | Click **✕** next to any uploaded file |
 | **Save all data** | **💾 שמור כ-JSON** — downloads a JSON snapshot |
 | **Export filtered CSV** | **📊 ייצוא CSV מסונן** — exports only currently filtered records |
+
+Data is also **auto-saved to localStorage** — it survives page refreshes without re-uploading. A "מחק נתונים שמורים" button clears the cache.
 
 ---
 
@@ -106,7 +123,7 @@ month,business,category,date,amount,payment,source
 ```
 
 ### CSV — Bank / Numbers Export Format
-Files exported directly from the bank app or Numbers. Supported Hebrew headers:
+Files exported directly from the bank app or Numbers. The parser auto-detects the delimiter (comma or semicolon) and supports these Hebrew headers:
 
 | Hebrew Header | Field |
 |---|---|
@@ -118,6 +135,8 @@ Files exported directly from the bank app or Numbers. Supported Hebrew headers:
 | אמצעי התשלום | payment |
 | סוג מקור | source |
 | האם מוחרג מהתזרים? | excluded |
+
+The parser handles amounts with thousands-separator commas (`"-1,234.56"`), currency symbols (`₪`), and European decimal formats.
 
 > **Note:** `.numbers` files cannot be uploaded directly. Export as CSV from Numbers first: `File → Export To → CSV`.
 
@@ -145,11 +164,12 @@ Each transaction record:
 
 ```
 cashflow-dashboard/
-├── index.html        # The entire app — data + UI + logic in one file
-└── README.md         # This file
+├── index.html          # Public app — no personal data, upload your own CSV
+├── index.local.html    # 🔒 Local copy with embedded data (git-ignored)
+├── README.md           # This file
+├── DOCS.md             # Technical / developer documentation
+└── QUICKSTART.md       # How to run the app with your own data
 ```
-
-The app is intentionally a **single HTML file** for portability — share it, open it offline, or email it.
 
 ---
 
@@ -169,5 +189,5 @@ No build step. No npm. No framework.
 
 - Large files (>10,000 records) may slow down chart rendering
 - `.numbers` files must be exported to CSV first
-- The embedded dataset is baked into `index.html` — to update the base dataset, re-run the Python extraction script
-- Browser's file access is sandboxed — saving to disk requires the download approach used here
+- The embedded dataset in `index.local.html` is baked in — to update it, re-run the Python extraction script
+- Browser file access is sandboxed — saving to disk uses the download approach
